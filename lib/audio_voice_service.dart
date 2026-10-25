@@ -59,6 +59,7 @@ class AudioVoiceService extends ChangeNotifier {
 
   bool _soundEnabled = true;
   bool _musicEnabled = true;
+  bool _welcomeGreetingEnabled = true;
   double _musicVolume = 0.8;
 
   bool _isSpeaking = false;
@@ -116,6 +117,7 @@ class AudioVoiceService extends ChangeNotifier {
   // Getters
   bool get soundEnabled => _soundEnabled;
   bool get musicEnabled => _musicEnabled;
+  bool get welcomeGreetingEnabled => _welcomeGreetingEnabled;
   double get musicVolume => _musicVolume;
   bool get isSpeaking => _isSpeaking;
   bool get isLoadingMusic => _isLoadingMusic;
@@ -136,6 +138,8 @@ class AudioVoiceService extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       _soundEnabled = prefs.getBool('parent_sound_enabled') ?? true;
       _musicEnabled = prefs.getBool('parent_music_enabled') ?? true;
+      _welcomeGreetingEnabled =
+          prefs.getBool('parent_welcome_greeting_enabled') ?? true;
       _musicVolume = prefs.getDouble('parent_music_volume') ?? 0.8;
     } catch (e) {
       debugPrint('AudioVoiceService: SharedPreferences error: $e');
@@ -157,23 +161,26 @@ class AudioVoiceService extends ChangeNotifier {
       _tts?.setStartHandler(() {
         _isSpeaking = true;
         _ttsErrorMessage = null;
+        debugPrint('AudioVoiceService: TTS utterance started speaking');
         notifyListeners();
       });
 
       _tts?.setCompletionHandler(() {
         _isSpeaking = false;
+        debugPrint('AudioVoiceService: TTS utterance completed speaking');
         notifyListeners();
       });
 
       _tts?.setCancelHandler(() {
         _isSpeaking = false;
+        debugPrint('AudioVoiceService: TTS utterance cancelled');
         notifyListeners();
       });
 
       _tts?.setErrorHandler((dynamic msg) {
         _isSpeaking = false;
         _ttsErrorMessage = 'TTS Error: $msg';
-        debugPrint('AudioVoiceService TTS error: $msg');
+        debugPrint('AudioVoiceService: TTS error received: $msg');
         notifyListeners();
       });
 
@@ -283,6 +290,16 @@ class AudioVoiceService extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// Toggle or update welcome greeting preference
+  Future<void> setWelcomeGreetingEnabled(bool enabled) async {
+    _welcomeGreetingEnabled = enabled;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('parent_welcome_greeting_enabled', enabled);
+    } catch (_) {}
+  }
+
   // --- Voice / Speech Operations ---
 
   /// Speak arbitrary text with automatic ducking of music and interruption of previous speech
@@ -372,6 +389,43 @@ class AudioVoiceService extends ChangeNotifier {
     await speak(phrase ?? cheers[(DateTime.now().millisecond) % cheers.length]);
   }
 
+  /// Automatic Teddy Welcome greeting with soft teddy sound effect and cute, child-friendly voice
+  Future<void> playTeddyWelcomeGreeting() async {
+    debugPrint(
+        'AudioVoiceService: playTeddyWelcomeGreeting() called. soundEnabled=$_soundEnabled, welcomeGreetingEnabled=$_welcomeGreetingEnabled');
+    if (!_soundEnabled) {
+      debugPrint(
+          'AudioVoiceService: playTeddyWelcomeGreeting() skipped because soundEnabled is false');
+      return;
+    }
+    if (!_welcomeGreetingEnabled) {
+      debugPrint(
+          'AudioVoiceService: playTeddyWelcomeGreeting() skipped because welcomeGreetingEnabled is false');
+      return;
+    }
+
+    try {
+      debugPrint(
+          'AudioVoiceService: Starting gentle welcome chime (audio/teddy_greeting.wav)...');
+      await playInstrumentSfx('teddy');
+      debugPrint('AudioVoiceService: Welcome chime started successfully');
+
+      // Wait 450ms so the gentle introductory sparkle chime completes before Teddy speaks
+      await Future.delayed(const Duration(milliseconds: 450));
+
+      const greeting =
+          "Hiii, little buddy! I'm Teddy! Let's play and learn together!";
+      debugPrint(
+          'AudioVoiceService: Speaking Teddy welcome voice: "$greeting"');
+      await speak(greeting, interrupt: true);
+      debugPrint(
+          'AudioVoiceService: Teddy welcome greeting speak call finished');
+    } catch (e, stack) {
+      debugPrint(
+          'AudioVoiceService: playTeddyWelcomeGreeting error: $e\n$stack');
+    }
+  }
+
   // --- Music Operations ---
 
   /// Play a specific track by index using genuine local asset
@@ -424,14 +478,24 @@ class AudioVoiceService extends ChangeNotifier {
         case 'guitar':
           asset = 'audio/guitar_chord.wav';
           break;
+        case 'teddy':
+        case 'teddy_greeting':
+          asset = 'audio/teddy_greeting.wav';
+          break;
         default:
           asset = 'audio/test_beep.wav';
       }
+      debugPrint(
+          'AudioVoiceService: playInstrumentSfx("$instrument") -> loading "$asset"');
       await _sfxPlayer?.stop();
       await _sfxPlayer?.play(AssetSource(asset)).timeout(
-            const Duration(milliseconds: 1500),
-            onTimeout: () {},
-          );
+        const Duration(milliseconds: 1500),
+        onTimeout: () {
+          debugPrint('AudioVoiceService: playInstrumentSfx timeout (fallback)');
+        },
+      );
+      debugPrint(
+          'AudioVoiceService: playInstrumentSfx("$instrument") playback started');
     } catch (e) {
       debugPrint('AudioVoiceService playInstrumentSfx error: $e');
     }

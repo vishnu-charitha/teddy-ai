@@ -161,6 +161,11 @@ def main():
     test_chime = [('A4', 0.2), ('E5', 0.2), ('A5', 0.5)]
     save_wav(synthesize_melody(test_chime, bpm=130, instrument='music_box'), os.path.join(target_dir, 'test_beep.wav'))
 
+    # 7. Teddy Warm Welcome Chime
+    # Gentle, soft, playful ascending sparkle: C5 -> E5 -> G5 -> C6 with soft warm decay
+    teddy_welcome = [('C5', 0.12), ('E5', 0.12), ('G5', 0.12), ('C6', 0.45)]
+    save_wav(synthesize_melody(teddy_welcome, bpm=135, instrument='music_box'), os.path.join(target_dir, 'teddy_greeting.wav'))
+
     print("All audio assets generated successfully!")
 
 if __name__ == '__main__':

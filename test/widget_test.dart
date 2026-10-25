@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:teddy_ai/main.dart';
+import 'package:teddy_ai/mascot.dart';
 
 void main() {
   testWidgets('Teddy AI welcome screen renders', (tester) async {
@@ -8,6 +9,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('Teddy AI'), findsOneWidget);
     expect(find.text("Let's Start Learning"), findsOneWidget);
+    expect(find.byType(TeddyMascot), findsOneWidget);
+
+    // Tapping Teddy Mascot replays greeting safely
+    await tester.tap(find.byType(TeddyMascot));
+    await tester.pump(const Duration(milliseconds: 400));
   });
 
   testWidgets('Navigate through welcome to age selection and dashboard',
@@ -286,4 +292,76 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('Games'), findsWidgets);
   });
+
+  testWidgets(
+      'TeddyMascot mouth animates while speaking and closes when silent',
+      (tester) async {
+    final speakingNotifier = ValueNotifier<bool>(false);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: AnimationSheetTestWrapper(
+              speakingNotifier: speakingNotifier,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.byType(TeddyMascot), findsOneWidget);
+
+    // Initial state: not speaking (mouth closed)
+    expect(speakingNotifier.value, isFalse);
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Transition to speaking: true
+    speakingNotifier.value = true;
+    await tester.pump(); // Register listener notification
+    await tester
+        .pump(const Duration(milliseconds: 130)); // Mid animation (mouth open)
+
+    // Transition to speaking: false
+    speakingNotifier.value = false;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200)); // Smooth closure
+  });
+}
+
+class AnimationSheetTestWrapper extends StatefulWidget {
+  final ValueNotifier<bool> speakingNotifier;
+  const AnimationSheetTestWrapper({super.key, required this.speakingNotifier});
+
+  @override
+  State<AnimationSheetTestWrapper> createState() =>
+      _AnimationSheetTestWrapperState();
+}
+
+class _AnimationSheetTestWrapperState extends State<AnimationSheetTestWrapper>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _bob;
+
+  @override
+  void initState() {
+    super.initState();
+    _bob =
+        AnimationController(vsync: this, duration: const Duration(seconds: 2));
+  }
+
+  @override
+  void dispose() {
+    _bob.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TeddyMascot(
+      bob: _bob,
+      size: 140,
+      isSpeakingListenable: widget.speakingNotifier,
+    );
+  }
 }

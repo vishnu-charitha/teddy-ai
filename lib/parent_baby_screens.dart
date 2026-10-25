@@ -32,6 +32,7 @@ class _ParentInfoScreenState extends State<ParentInfoScreen> {
   String _language = 'English';
   bool _soundEnabled = true;
   bool _musicEnabled = true;
+  bool _welcomeGreetingEnabled = true;
 
   final List<String> _languages = const [
     'English',
@@ -105,6 +106,7 @@ class _ParentInfoScreenState extends State<ParentInfoScreen> {
       _language = profile.language;
       _soundEnabled = profile.soundEnabled;
       _musicEnabled = profile.musicEnabled;
+      _welcomeGreetingEnabled = profile.welcomeGreetingEnabled;
     });
   }
 
@@ -117,11 +119,14 @@ class _ParentInfoScreenState extends State<ParentInfoScreen> {
       language: _language,
       soundEnabled: _soundEnabled,
       musicEnabled: _musicEnabled,
+      welcomeGreetingEnabled: _welcomeGreetingEnabled,
     );
 
     await ProfileRepository.saveParentProfile(profile);
     await AudioVoiceService().setSoundEnabled(_soundEnabled);
     await AudioVoiceService().setMusicEnabled(_musicEnabled);
+    await AudioVoiceService()
+        .setWelcomeGreetingEnabled(_welcomeGreetingEnabled);
 
     if (!mounted) return;
 
@@ -352,6 +357,22 @@ class _ParentInfoScreenState extends State<ParentInfoScreen> {
                     activeThumbColor: purple,
                     value: _musicEnabled,
                     onChanged: (v) => setState(() => _musicEnabled = v),
+                  ),
+                  const Divider(height: 1),
+                  SwitchListTile(
+                    title: const Text(
+                      'Teddy Welcome Voice & Sound',
+                      style:
+                          TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                    ),
+                    subtitle: const Text(
+                      'Greets your baby warmly when opening the app',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    activeThumbColor: purple,
+                    value: _welcomeGreetingEnabled,
+                    onChanged: (v) =>
+                        setState(() => _welcomeGreetingEnabled = v),
                   ),
                 ],
               ),

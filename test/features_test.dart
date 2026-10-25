@@ -158,6 +158,29 @@ void main() {
       await service.playInstrumentSfx('drum');
       await service.playInstrumentSfx('chime');
       await service.playInstrumentSfx('guitar');
+      await service.playInstrumentSfx('teddy');
+    });
+
+    test(
+        'AudioVoiceService triggers Teddy welcome greeting and respects settings',
+        () async {
+      final service = AudioVoiceService();
+      await service.setWelcomeGreetingEnabled(true);
+      expect(service.welcomeGreetingEnabled, isTrue);
+
+      // Play welcome greeting
+      await service.playTeddyWelcomeGreeting();
+
+      // Disable welcome greeting
+      await service.setWelcomeGreetingEnabled(false);
+      expect(service.welcomeGreetingEnabled, isFalse);
+
+      // Should safely return without error when disabled
+      await service.playTeddyWelcomeGreeting();
+
+      // Re-enable
+      await service.setWelcomeGreetingEnabled(true);
+      expect(service.welcomeGreetingEnabled, isTrue);
     });
 
     test('AudioVoiceService runs comprehensive diagnostic test', () async {

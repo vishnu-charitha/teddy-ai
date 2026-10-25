@@ -9,6 +9,7 @@ class ParentProfile {
   String language;
   bool soundEnabled;
   bool musicEnabled;
+  bool welcomeGreetingEnabled;
 
   ParentProfile({
     this.name = 'Sarah',
@@ -16,6 +17,7 @@ class ParentProfile {
     this.language = 'English',
     this.soundEnabled = true,
     this.musicEnabled = true,
+    this.welcomeGreetingEnabled = true,
   });
 
   Map<String, dynamic> toJson() => {
@@ -24,6 +26,7 @@ class ParentProfile {
         'language': language,
         'soundEnabled': soundEnabled,
         'musicEnabled': musicEnabled,
+        'welcomeGreetingEnabled': welcomeGreetingEnabled,
       };
 
   factory ParentProfile.fromJson(Map<String, dynamic> json) => ParentProfile(
@@ -32,6 +35,7 @@ class ParentProfile {
         language: json['language'] as String? ?? 'English',
         soundEnabled: json['soundEnabled'] as bool? ?? true,
         musicEnabled: json['musicEnabled'] as bool? ?? true,
+        welcomeGreetingEnabled: json['welcomeGreetingEnabled'] as bool? ?? true,
       );
 }
 

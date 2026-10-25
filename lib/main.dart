@@ -62,6 +62,7 @@ class _TeddyShellState extends State<TeddyShell> with TickerProviderStateMixin {
   bool parentLog = false;
   int _badgesSource = 2;
   bool _celebrating = false;
+  bool _hasPlayedWelcomeGreeting = false;
 
   BabyProfile babyProfile = BabyProfile();
   ParentProfile parentProfile = ParentProfile();
@@ -140,9 +141,32 @@ class _TeddyShellState extends State<TeddyShell> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 1800),
     )..repeat(reverse: true);
-    debugPrint('Teddy AI: initState() called');
-    AudioVoiceService().init();
-    _load();
+    _initAppAndGreeting();
+  }
+
+  Future<void> _initAppAndGreeting() async {
+    debugPrint('Teddy AI: _initAppAndGreeting() starting...');
+    await AudioVoiceService().init();
+    await _load();
+    if (!mounted) return;
+
+    // Use WidgetsBinding post-frame callback so the initial welcome/home screen is fully rendered
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!_hasPlayedWelcomeGreeting) {
+        _hasPlayedWelcomeGreeting = true;
+        debugPrint(
+            'Teddy AI: Post-frame callback executing. Initial page is $page. Starting greeting...');
+        // Gentle delay after first frame to let Android audio track and TTS service settle
+        Future.delayed(const Duration(milliseconds: 400), () {
+          if (mounted) {
+            debugPrint(
+                'Teddy AI: Triggering AudioVoiceService().playTeddyWelcomeGreeting()...');
+            AudioVoiceService().playTeddyWelcomeGreeting();
+          }
+        });
+      }
+    });
   }
 
   Future<void> _load() async {
@@ -163,7 +187,13 @@ class _TeddyShellState extends State<TeddyShell> with TickerProviderStateMixin {
           badges.addAll(savedBadges);
         }
       });
-      if (started) setState(() => page = 2);
+      debugPrint(
+          'Teddy AI: _load() completed. started=$started, initial page=$page');
+      if (started) {
+        setState(() => page = 2);
+        debugPrint(
+            'Teddy AI: User previously started onboarding, page set to 2');
+      }
     } catch (e) {
       debugPrint('Error loading preferences: $e');
     }
@@ -895,6 +925,9 @@ class WelcomeScreen extends StatelessWidget {
                         size: 210,
                         waving: true,
                         interactive: true,
+                        onTap: () {
+                          AudioVoiceService().playTeddyWelcomeGreeting();
+                        },
                       ),
                       const SizedBox(height: 28),
                       BouncyButton(
@@ -1227,7 +1260,14 @@ class Dashboard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  TeddyMascot(bob: bob, size: 96),
+                  TeddyMascot(
+                    bob: bob,
+                    size: 96,
+                    interactive: true,
+                    onTap: () {
+                      AudioVoiceService().playTeddyWelcomeGreeting();
+                    },
+                  ),
                 ],
               ),
             ),
@@ -1584,15 +1624,28 @@ class LearningScreen extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 8),
-                          AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 350),
-                            child: Text(
-                              emoji,
-                              key: ValueKey(emoji),
-                              style: const TextStyle(fontSize: 80),
-                            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 350),
+                                child: Text(
+                                  emoji,
+                                  key: ValueKey(emoji),
+                                  style: const TextStyle(fontSize: 72),
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              TeddyMascot(
+                                bob: bob,
+                                size: 84,
+                                interactive: true,
+                                onTap: onSpeak,
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 10),
                           Text(
                             subtitle,
                             style: const TextStyle(
