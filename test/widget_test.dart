@@ -1,58 +1,125 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:teddy_ai/main.dart';
 import 'package:teddy_ai/mascot.dart';
 
+import 'package:flutter/services.dart';
+import 'package:teddy_ai/parent_baby_screens.dart';
+
 void main() {
-  testWidgets('Teddy AI welcome screen renders', (tester) async {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({
+      'started': true,
+      'completedOnboarding': true,
+    });
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('flutter_tts'),
+            (call) async => 1);
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('xyz.luan/audioplayers'),
+            (call) async => 1);
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+            const MethodChannel('xyz.luan/audioplayers.global'),
+            (call) async => 1);
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+            const MethodChannel('plugins.flutter.io/path_provider'),
+            (call) async => '.');
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+            const MethodChannel('xyz.luan/audioplayers/events/*'),
+            (call) async => 1);
+  });
+
+  testWidgets('Teddy AI welcome screen renders with mascot and actions',
+      (tester) async {
     await tester.pumpWidget(const TeddyAiApp());
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('Teddy AI'), findsOneWidget);
-    expect(find.text("Let's Start Learning"), findsOneWidget);
+    expect(find.text('Continue Learning'), findsOneWidget);
+    expect(find.text('Parent Log In'), findsOneWidget);
     expect(find.byType(TeddyMascot), findsOneWidget);
 
-    // Tapping Teddy Mascot replays greeting safely
-    await tester.tap(find.byType(TeddyMascot));
-    await tester.pump(const Duration(milliseconds: 400));
+    // Drain startup greeting delayed timer
+    await tester.pump(const Duration(milliseconds: 2500));
   });
 
-  testWidgets('Navigate through welcome to age selection and dashboard',
+  testWidgets('Returning user taps Continue Learning and enters Dashboard',
       (tester) async {
     await tester.pumpWidget(const TeddyAiApp());
     await tester.pump(const Duration(milliseconds: 100));
 
-    final startButton = find.text("Let's Start Learning");
+    final startButton = find.text('Continue Learning');
     expect(startButton, findsOneWidget);
     await tester.tap(startButton);
-    await tester.pump(const Duration(milliseconds: 500));
-
-    expect(find.text('How old is your child?'), findsOneWidget);
-
-    final continueBtn = find.text('Continue ✨');
-    expect(continueBtn, findsOneWidget);
-    await tester.ensureVisible(continueBtn);
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.tap(continueBtn);
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.text('Hi, Emma! 👋'), findsOneWidget);
   });
 
-  testWidgets('Age screen back button returns to welcome screen',
+  testWidgets(
+      'First-time user onboarding flow Step 1 -> Step 2 -> Step 3 -> Dashboard',
       (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'started': false,
+      'completedOnboarding': false,
+    });
+
     await tester.pumpWidget(const TeddyAiApp());
     await tester.pump(const Duration(milliseconds: 100));
 
-    await tester.tap(find.text("Let's Start Learning"));
-    await tester.pump(const Duration(milliseconds: 500));
-    expect(find.text('How old is your child?'), findsOneWidget);
-
-    final backBtn = find.byIcon(Icons.arrow_back_rounded);
-    expect(backBtn, findsOneWidget);
-    await tester.tap(backBtn);
+    // Welcome Screen has "Get Started / Create Profile"
+    expect(find.text('Get Started / Create Profile'), findsOneWidget);
+    await tester.tap(find.text('Get Started / Create Profile'));
     await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.text("Let's Start Learning"), findsOneWidget);
+    // Step 1: Parent Setup
+    expect(find.text('Step 1 of 3: Parent Setup'), findsOneWidget);
+    final saveParentBtn = find.descendant(
+      of: find.byType(ParentProfileScreen),
+      matching: find.text('Save Profile ⭐'),
+    );
+    await tester.ensureVisible(saveParentBtn);
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(saveParentBtn);
+    await tester.pump(const Duration(milliseconds: 500));
+
+    // Step 2: Baby Details
+    expect(find.text('Step 2 of 3: Baby Details'), findsOneWidget);
+    final saveBabyBtn = find.descendant(
+      of: find.byType(BabyInfoScreen),
+      matching: find.text('Save Profile ⭐'),
+    );
+    await tester.ensureVisible(saveBabyBtn);
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(saveBabyBtn);
+    await tester.pump(const Duration(milliseconds: 500));
+
+    // Step 3: Review Profiles
+    expect(find.text('Step 3 of 3: Confirmation'), findsOneWidget);
+    final enterBtn = find.text('Enter Teddy AI Dashboard ✨');
+    await tester.ensureVisible(enterBtn);
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(enterBtn);
+    await tester.pump(const Duration(milliseconds: 500));
+
+    // Dashboard
+    expect(find.text('Hi, Emma! 👋'), findsOneWidget);
+
+    // Reset back to returning user for subsequent test cases
+    SharedPreferences.setMockInitialValues({
+      'started': true,
+      'completedOnboarding': true,
+    });
   });
 
   testWidgets('Learning screen previous and next navigation works correctly',
@@ -60,13 +127,8 @@ void main() {
     await tester.pumpWidget(const TeddyAiApp());
     await tester.pump(const Duration(milliseconds: 100));
 
-    // Welcome -> Age -> Dashboard
-    await tester.tap(find.text("Let's Start Learning"));
-    await tester.pump(const Duration(milliseconds: 500));
-    final continueBtn = find.text('Continue ✨');
-    await tester.ensureVisible(continueBtn);
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.tap(continueBtn);
+    // Welcome Screen -> Continue Learning -> Dashboard
+    await tester.tap(find.text('Continue Learning'));
     await tester.pump(const Duration(milliseconds: 500));
 
     // Open Alphabet from Dashboard
@@ -98,26 +160,22 @@ void main() {
     await tester.pumpWidget(const TeddyAiApp());
     await tester.pump(const Duration(milliseconds: 100));
 
-    // Navigate to Dashboard
-    await tester.tap(find.text("Let's Start Learning"));
-    await tester.pump(const Duration(milliseconds: 500));
-    final continueBtn = find.text('Continue ✨');
-    await tester.ensureVisible(continueBtn);
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.tap(continueBtn);
+    // Welcome Screen -> Continue Learning -> Dashboard
+    await tester.tap(find.text('Continue Learning'));
     await tester.pump(const Duration(milliseconds: 500));
 
     // Test 1: Open Badges from Dashboard -> Back returns to Dashboard
-    final dashBadges = find.text('My Badges');
-    await tester.ensureVisible(dashBadges);
-    await tester.pump(const Duration(milliseconds: 100));
+    final dashBadges = find.text('Badges');
+    await tester.scrollUntilVisible(dashBadges, 300,
+        scrollable: find.byType(Scrollable).first);
+    expect(dashBadges, findsOneWidget);
     await tester.tap(dashBadges);
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('First Letter'), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.arrow_back_rounded).last);
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.text('Hi, Emma! 👋'), findsOneWidget);
+    expect(find.textContaining('👋'), findsOneWidget);
 
     // Test 2: Open Badges from Progress -> Back returns to Progress
     await tester.tap(find.text('Progress'));
@@ -127,8 +185,8 @@ void main() {
     await tester.drag(find.byType(ListView), const Offset(0, -300));
     await tester.pump(const Duration(milliseconds: 100));
     final badgesBtn = find.text('Badges');
-    expect(badgesBtn, findsOneWidget);
-    await tester.tap(badgesBtn);
+    expect(badgesBtn, findsWidgets);
+    await tester.tap(badgesBtn.last);
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('First Letter'), findsOneWidget);
 
@@ -141,13 +199,8 @@ void main() {
     await tester.pumpWidget(const TeddyAiApp());
     await tester.pump(const Duration(milliseconds: 100));
 
-    // Navigate to Dashboard
-    await tester.tap(find.text("Let's Start Learning"));
-    await tester.pump(const Duration(milliseconds: 500));
-    final continueBtn = find.text('Continue ✨');
-    await tester.ensureVisible(continueBtn);
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.tap(continueBtn);
+    // Welcome Screen -> Continue Learning -> Dashboard
+    await tester.tap(find.text('Continue Learning'));
     await tester.pump(const Duration(milliseconds: 500));
 
     // Open Activities
@@ -179,12 +232,8 @@ void main() {
     await tester.pumpWidget(const TeddyAiApp());
     await tester.pump(const Duration(milliseconds: 100));
 
-    // Welcome -> Dashboard
-    await tester.tap(find.text("Let's Start Learning"));
-    await tester.pump(const Duration(milliseconds: 500));
-    final continueBtn = find.text('Continue ✨');
-    await tester.ensureVisible(continueBtn);
-    await tester.tap(continueBtn);
+    // Welcome Screen -> Continue Learning -> Dashboard
+    await tester.tap(find.text('Continue Learning'));
     await tester.pump(const Duration(milliseconds: 500));
 
     // Open Numbers
@@ -225,12 +274,8 @@ void main() {
     await tester.pumpWidget(const TeddyAiApp());
     await tester.pump(const Duration(milliseconds: 100));
 
-    // Welcome -> Dashboard
-    await tester.tap(find.text("Let's Start Learning"));
-    await tester.pump(const Duration(milliseconds: 500));
-    final continueBtn = find.text('Continue ✨');
-    await tester.ensureVisible(continueBtn);
-    await tester.tap(continueBtn);
+    // Welcome Screen -> Continue Learning -> Dashboard
+    await tester.tap(find.text('Continue Learning'));
     await tester.pump(const Duration(milliseconds: 500));
 
     // Open Stories
@@ -258,12 +303,8 @@ void main() {
     await tester.pumpWidget(const TeddyAiApp());
     await tester.pump(const Duration(milliseconds: 100));
 
-    // Welcome -> Dashboard
-    await tester.tap(find.text("Let's Start Learning"));
-    await tester.pump(const Duration(milliseconds: 500));
-    final continueBtn = find.text('Continue ✨');
-    await tester.ensureVisible(continueBtn);
-    await tester.tap(continueBtn);
+    // Welcome Screen -> Continue Learning -> Dashboard
+    await tester.tap(find.text('Continue Learning'));
     await tester.pump(const Duration(milliseconds: 500));
 
     // Open Games

@@ -59,6 +59,8 @@ class _TeddyShellState extends State<TeddyShell> with TickerProviderStateMixin {
   int selectedColor = 0;
   int gameTurns = 0;
   bool started = false;
+  bool isReturningUser = false;
+  int onboardingStep = 0;
   bool parentLog = false;
   int _badgesSource = 2;
   bool _celebrating = false;
@@ -175,6 +177,10 @@ class _TeddyShellState extends State<TeddyShell> with TickerProviderStateMixin {
       final baby = await ProfileRepository.loadBabyProfile();
       final parent = await ProfileRepository.loadParentProfile();
 
+      final completedOnboarding =
+          await ProfileRepository.hasCompletedOnboarding();
+      final savedStep = await ProfileRepository.getOnboardingStep();
+
       if (!mounted) return;
       setState(() {
         babyProfile = baby;
@@ -182,18 +188,15 @@ class _TeddyShellState extends State<TeddyShell> with TickerProviderStateMixin {
         age = baby.age;
         completed = p.getInt('completed') ?? 0;
         started = p.getBool('started') ?? false;
+        isReturningUser = completedOnboarding || started;
+        onboardingStep = savedStep;
         final savedBadges = p.getStringList('badges');
         if (savedBadges != null && savedBadges.isNotEmpty) {
           badges.addAll(savedBadges);
         }
       });
       debugPrint(
-          'Teddy AI: _load() completed. started=$started, initial page=$page');
-      if (started) {
-        setState(() => page = 2);
-        debugPrint(
-            'Teddy AI: User previously started onboarding, page set to 2');
-      }
+          'Teddy AI: _load() completed. isReturningUser=$isReturningUser, onboardingStep=$onboardingStep, page remains $page');
     } catch (e) {
       debugPrint('Error loading preferences: $e');
     }
@@ -284,14 +287,29 @@ class _TeddyShellState extends State<TeddyShell> with TickerProviderStateMixin {
       case 12: // Badges -> return to source
         setState(() => page = _badgesSource);
         break;
-      case 18: // Parent Info -> Parent Screen
+      case 18: // Parent Info / Setup
+        if (!isReturningUser) {
+          // In onboarding step 1 -> back goes to welcome screen
+          setState(() => page = 0);
+        } else {
+          // Returning user from Settings / Dashboard -> Parent Screen
+          setState(() => page = 13);
+        }
+        break;
+      case 19: // Baby Info (Editable details)
+        if (!isReturningUser) {
+          // In onboarding step 2 -> back goes to Parent Setup (step 1)
+          setState(() => page = 18);
+        } else {
+          // Regular app flow -> back goes to Baby Profile Dashboard
+          setState(() => page = 20);
+        }
+        break;
+      case 20: // Baby Profile (Dashboard view) -> Parent Screen
         setState(() => page = 13);
         break;
-      case 19: // Baby Info -> Baby Profile
-        setState(() => page = 20);
-        break;
-      case 20: // Baby Profile -> Parent Screen
-        setState(() => page = 13);
+      case 21: // Onboarding Review (Step 3) -> back goes to Baby Info (step 2)
+        setState(() => page = 19);
         break;
       case 0: // Welcome screen -> system back can pop
         break;
@@ -356,7 +374,34 @@ class _TeddyShellState extends State<TeddyShell> with TickerProviderStateMixin {
     PageFrame.defaultBackAction = _handleBack;
 
     final pages = <Widget>[
-      WelcomeScreen(onStart: () => go(1), bob: bob),
+      WelcomeScreen(
+        onStart: () async {
+          if (isReturningUser) {
+            go(2);
+          } else {
+            // Resume at saved incomplete step or start step 1
+            final step = await ProfileRepository.getOnboardingStep();
+            if (step == 2) {
+              go(19);
+            } else if (step == 3) {
+              go(21);
+            } else {
+              await ProfileRepository.setOnboardingStep(1);
+              go(18);
+            }
+          }
+        },
+        onLoginSuccess: () async {
+          await ProfileRepository.setOnboardingCompleted(true);
+          setState(() {
+            isReturningUser = true;
+            started = true;
+          });
+          go(2);
+        },
+        isReturningUser: isReturningUser,
+        bob: bob,
+      ),
       AgeScreen(
         age: age,
         onAge: (v) => setState(() => age = v),
@@ -372,6 +417,7 @@ class _TeddyShellState extends State<TeddyShell> with TickerProviderStateMixin {
       Dashboard(
         age: age,
         completed: completed,
+        babyProfile: babyProfile,
         bob: bob,
         onOpen: (p) {
           if (p == 12) _badgesSource = 2;
@@ -516,6 +562,8 @@ class _TeddyShellState extends State<TeddyShell> with TickerProviderStateMixin {
           _badgesSource = 11;
           go(12);
         },
+        onBabyProfile: () => go(20),
+        onParentProfile: () => go(18),
       ),
       BadgesScreen(badges: badges),
       ParentScreen(
@@ -544,15 +592,26 @@ class _TeddyShellState extends State<TeddyShell> with TickerProviderStateMixin {
       MusicPlayerScreen(
         onBack: () => go(9),
       ),
-      // --- Page 18: Parent Information & Audio Preferences ---
-      ParentInfoScreen(
-        onBack: () => go(13),
-        onOpenBabyProfile: () => go(20),
-        onEditBabyInfo: () => go(19),
+      // --- Page 18: Parent Profile Screen ---
+      ParentProfileScreen(
+        headerSubtitle: !isReturningUser ? 'Step 1 of 3: Parent Setup' : null,
+        onBack: _handleBack,
+        onSwitchToBabyProfile: () => go(20),
+        onSaveSuccess: () async {
+          final p = await ProfileRepository.loadParentProfile();
+          if (mounted) setState(() => parentProfile = p);
+          if (!isReturningUser) {
+            await ProfileRepository.setOnboardingStep(2);
+            go(19);
+          } else {
+            go(13);
+          }
+        },
       ),
       // --- Page 19: Baby Information (Editable details) ---
       BabyInfoScreen(
-        onBack: () => go(20),
+        headerSubtitle: !isReturningUser ? 'Step 2 of 3: Baby Details' : null,
+        onBack: _handleBack,
         onSaveSuccess: () async {
           final b = await ProfileRepository.loadBabyProfile();
           if (mounted) {
@@ -561,7 +620,12 @@ class _TeddyShellState extends State<TeddyShell> with TickerProviderStateMixin {
               age = b.age;
             });
           }
-          go(20);
+          if (!isReturningUser) {
+            await ProfileRepository.setOnboardingStep(3);
+            go(21);
+          } else {
+            go(20);
+          }
         },
       ),
       // --- Page 20: Baby Profile (Dashboard view) ---
@@ -571,6 +635,29 @@ class _TeddyShellState extends State<TeddyShell> with TickerProviderStateMixin {
         bob: bob,
         onBack: () => go(13),
         onEditProfile: () => go(19),
+        onSwitchToParentProfile: () => go(18),
+      ),
+      // --- Page 21: Onboarding Review Screen (Step 3 of 3) ---
+      OnboardingReviewScreen(
+        parentProfile: parentProfile,
+        babyProfile: babyProfile,
+        onBack: _handleBack,
+        onEditParent: () => go(18),
+        onEditBaby: () => go(19),
+        onConfirmAndEnter: () async {
+          await ProfileRepository.setOnboardingCompleted(true);
+          await ProfileRepository.setOnboardingStep(0);
+          final p = await SharedPreferences.getInstance();
+          await p.setBool('started', true);
+          if (mounted) {
+            setState(() {
+              isReturningUser = true;
+              started = true;
+            });
+          }
+          _save();
+          go(2);
+        },
       ),
     ];
 
@@ -582,7 +669,8 @@ class _TeddyShellState extends State<TeddyShell> with TickerProviderStateMixin {
         page != 16 &&
         page != 17 &&
         page != 18 &&
-        page != 19;
+        page != 19 &&
+        page != 21;
 
     return PopScope<Object?>(
       canPop: page == 0,
@@ -791,10 +879,205 @@ class TeddyNav extends StatelessWidget {
 
 // --- Screen 0: Welcome Screen ---
 
-class WelcomeScreen extends StatelessWidget {
+class WelcomeScreen extends StatefulWidget {
   final VoidCallback onStart;
+  final VoidCallback onLoginSuccess;
+  final bool isReturningUser;
   final AnimationController bob;
-  const WelcomeScreen({super.key, required this.onStart, required this.bob});
+
+  const WelcomeScreen({
+    super.key,
+    required this.onStart,
+    required this.onLoginSuccess,
+    this.isReturningUser = false,
+    required this.bob,
+  });
+
+  @override
+  State<WelcomeScreen> createState() => _WelcomeScreenState();
+}
+
+class _WelcomeScreenState extends State<WelcomeScreen> {
+  void _showLoginDialog() {
+    final emailController = TextEditingController();
+    final passwordController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    bool obscurePassword = true;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+          backgroundColor: warmWhite,
+          title: const Row(
+            children: [
+              Text('🧸 ', style: TextStyle(fontSize: 24)),
+              Expanded(
+                child: Text(
+                  'Parent Account Login',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 20,
+                    color: ink,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Sign in to manage your child’s Teddy AI profile and learning progress.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: inkSecondary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Parent Email',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                      color: ink,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  TextFormField(
+                    controller: emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: InputDecoration(
+                      hintText: 'parent@example.com',
+                      filled: true,
+                      fillColor: Colors.white,
+                      prefixIcon:
+                          const Icon(Icons.email_outlined, color: purple),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: const BorderSide(color: Color(0xFFE4EDF5)),
+                      ),
+                    ),
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) {
+                        return 'Please enter parent email';
+                      }
+                      if (!v.contains('@') || !v.contains('.')) {
+                        return 'Please enter a valid email';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Password',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                      color: ink,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  TextFormField(
+                    controller: passwordController,
+                    obscureText: obscurePassword,
+                    decoration: InputDecoration(
+                      hintText: 'Enter account password',
+                      filled: true,
+                      fillColor: Colors.white,
+                      prefixIcon:
+                          const Icon(Icons.lock_outline_rounded, color: purple),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscurePassword
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined,
+                          color: inkSecondary,
+                        ),
+                        onPressed: () {
+                          setDialogState(() {
+                            obscurePassword = !obscurePassword;
+                          });
+                        },
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: const BorderSide(color: Color(0xFFE4EDF5)),
+                      ),
+                    ),
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) {
+                        return 'Please enter password';
+                      }
+                      if (v.length < 4) {
+                        return 'Password must be at least 4 characters';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Note: Teddy AI currently stores profiles locally on your device. Local sign-in confirms parent access.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: inkSecondary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: inkSecondary,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (formKey.currentState!.validate()) {
+                  final enteredEmail = emailController.text.trim();
+                  final parent = await ProfileRepository.loadParentProfile();
+                  if (enteredEmail.isNotEmpty && parent.email.isEmpty) {
+                    parent.email = enteredEmail;
+                    await ProfileRepository.saveParentProfile(parent);
+                  }
+                  if (ctx.mounted) {
+                    Navigator.of(ctx).pop();
+                  }
+                  widget.onLoginSuccess();
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: purple,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+              ),
+              child: const Text(
+                'Log In',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) => Container(
@@ -921,7 +1204,7 @@ class WelcomeScreen extends StatelessWidget {
                       const SizedBox(height: 24),
                       // Animated waving Mascot
                       TeddyMascot(
-                        bob: bob,
+                        bob: widget.bob,
                         size: 210,
                         waving: true,
                         interactive: true,
@@ -930,8 +1213,9 @@ class WelcomeScreen extends StatelessWidget {
                         },
                       ),
                       const SizedBox(height: 28),
+                      // Primary Action: Continue Learning / Get Started
                       BouncyButton(
-                        onTap: onStart,
+                        onTap: widget.onStart,
                         child: Container(
                           width: double.infinity,
                           height: 62,
@@ -950,15 +1234,17 @@ class WelcomeScreen extends StatelessWidget {
                               ),
                             ],
                           ),
-                          child: const Row(
+                          child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.star_rounded,
+                              const Icon(Icons.star_rounded,
                                   color: Colors.white, size: 26),
-                              SizedBox(width: 8),
+                              const SizedBox(width: 8),
                               Text(
-                                "Let's Start Learning",
-                                style: TextStyle(
+                                widget.isReturningUser
+                                    ? 'Continue Learning'
+                                    : "Get Started / Create Profile",
+                                style: const TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.w900,
                                   color: Colors.white,
@@ -969,7 +1255,49 @@ class WelcomeScreen extends StatelessWidget {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 14),
+                      // Secondary Action: Log In button
+                      BouncyButton(
+                        onTap: _showLoginDialog,
+                        child: Container(
+                          width: double.infinity,
+                          height: 48,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.9),
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(
+                              color: const Color(0xFFE4EDF5),
+                              width: 1.5,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF0D2850)
+                                    .withValues(alpha: 0.05),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.lock_person_rounded,
+                                  color: purple, size: 20),
+                              SizedBox(width: 8),
+                              Text(
+                                'Parent Log In',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800,
+                                  color: purple,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
                       const Text(
                         'A safe little world to learn and explore ✨',
                         style: TextStyle(
@@ -1161,6 +1489,7 @@ class AgeScreen extends StatelessWidget {
 
 class Dashboard extends StatelessWidget {
   final int age, completed;
+  final BabyProfile babyProfile;
   final AnimationController bob;
   final ValueChanged<int> onOpen;
 
@@ -1168,6 +1497,7 @@ class Dashboard extends StatelessWidget {
     super.key,
     required this.age,
     required this.completed,
+    required this.babyProfile,
     required this.bob,
     required this.onOpen,
   });
@@ -1203,9 +1533,9 @@ class Dashboard extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Hi, Emma! 👋',
-                          style: TextStyle(
+                        Text(
+                          'Hi, ${babyProfile.nickname}! 👋',
+                          style: const TextStyle(
                             fontSize: 25,
                             fontWeight: FontWeight.w900,
                             color: ink,
@@ -1223,7 +1553,7 @@ class Dashboard extends StatelessWidget {
                         ),
                         const SizedBox(height: 10),
                         BouncyButton(
-                          onTap: () => onOpen(1),
+                          onTap: () => onOpen(20),
                           child: Container(
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 14, vertical: 6),
@@ -1242,6 +1572,8 @@ class Dashboard extends StatelessWidget {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                const Text('👶 ',
+                                    style: TextStyle(fontSize: 13)),
                                 Text(
                                   'Age $age',
                                   style: const TextStyle(
@@ -1400,7 +1732,7 @@ class Dashboard extends StatelessWidget {
             ),
             const SizedBox(height: 18),
             const Text(
-              'Keep exploring!',
+              'Profiles & Milestones',
               style: TextStyle(
                 fontWeight: FontWeight.w900,
                 fontSize: 18,
@@ -1412,17 +1744,25 @@ class Dashboard extends StatelessWidget {
               children: [
                 Expanded(
                   child: MiniAction(
-                    emoji: '🏆',
-                    title: 'My Badges',
-                    onTap: () => onOpen(12),
+                    emoji: '👶',
+                    title: 'Baby Profile',
+                    onTap: () => onOpen(20),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: MiniAction(
                     emoji: '👨‍👩‍👧',
-                    title: 'Parent View',
-                    onTap: () => onOpen(13),
+                    title: 'Parent Profile',
+                    onTap: () => onOpen(18),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: MiniAction(
+                    emoji: '🏆',
+                    title: 'Badges',
+                    onTap: () => onOpen(12),
                   ),
                 ),
               ],
@@ -1500,10 +1840,10 @@ class MiniAction extends StatelessWidget {
   Widget build(BuildContext context) => BouncyButton(
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(18),
             border: Border.all(color: const Color(0xFFE5EFF7), width: 1.5),
             boxShadow: [
               BoxShadow(
@@ -1513,22 +1853,24 @@ class MiniAction extends StatelessWidget {
               ),
             ],
           ),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(emoji, style: const TextStyle(fontSize: 26)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    color: ink,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 14,
-                  ),
+              const SizedBox(height: 6),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: ink,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 12,
+                  height: 1.15,
                 ),
               ),
-              const Icon(Icons.arrow_forward_ios_rounded,
-                  size: 16, color: inkSecondary),
             ],
           ),
         ),
@@ -2890,11 +3232,15 @@ class ButterflyPainter extends CustomPainter {
 class ProgressScreen extends StatelessWidget {
   final int completed;
   final VoidCallback onBadges;
+  final VoidCallback? onBabyProfile;
+  final VoidCallback? onParentProfile;
 
   const ProgressScreen({
     super.key,
     required this.completed,
     required this.onBadges,
+    this.onBabyProfile,
+    this.onParentProfile,
   });
 
   @override
@@ -3075,6 +3421,63 @@ class ProgressScreen extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: BouncyButton(
+                  onTap: onBabyProfile,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: mintLight,
+                      borderRadius: BorderRadius.circular(16),
+                      border:
+                          Border.all(color: mintDeep.withValues(alpha: 0.2)),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('👶 ', style: TextStyle(fontSize: 16)),
+                        Text('Baby Profile',
+                            style: TextStyle(
+                              color: Color(0xFF1E824C),
+                              fontWeight: FontWeight.w900,
+                              fontSize: 13,
+                            )),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: BouncyButton(
+                  onTap: onParentProfile,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: lavender,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: purple.withValues(alpha: 0.2)),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('👨‍👩‍👧 ', style: TextStyle(fontSize: 16)),
+                        Text('Parent Profile',
+                            style: TextStyle(
+                              color: purple,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 13,
+                            )),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
         ],

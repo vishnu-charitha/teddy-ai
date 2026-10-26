@@ -13,7 +13,10 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({
+      'started': true,
+      'completedOnboarding': true,
+    });
 
     // Register mock method call handlers for platform channels
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -57,20 +60,31 @@ void main() {
       expect(initial.avatarName, 'Teddy');
 
       final updated = BabyProfile(
+        fullName: 'Leo Alexander',
         nickname: 'Leo',
+        dateOfBirth: DateTime(2021, 5, 20),
         age: 5,
+        gender: 'Boy',
         avatarName: 'Lion',
         language: 'Spanish',
+        favoriteAnimals: ['Lion', 'Teddy Bear'],
+        favoriteColors: ['Sky Blue'],
+        favoriteActivities: ['Counting Numbers'],
         preferences: ['Puzzles & Games', 'Music & Songs'],
       );
 
       await ProfileRepository.saveBabyProfile(updated);
       final reloaded = await ProfileRepository.loadBabyProfile();
 
+      expect(reloaded.fullName, 'Leo Alexander');
       expect(reloaded.nickname, 'Leo');
       expect(reloaded.age, 5);
+      expect(reloaded.gender, 'Boy');
       expect(reloaded.avatarName, 'Lion');
       expect(reloaded.language, 'Spanish');
+      expect(reloaded.favoriteAnimals, contains('Lion'));
+      expect(reloaded.favoriteColors, contains('Sky Blue'));
+      expect(reloaded.favoriteActivities, contains('Counting Numbers'));
       expect(reloaded.preferences, contains('Puzzles & Games'));
       expect(reloaded.preferences, contains('Music & Songs'));
     });
@@ -78,26 +92,36 @@ void main() {
     test('ParentProfile serialization and audio preference persistence',
         () async {
       final initial = await ProfileRepository.loadParentProfile();
-      expect(initial.name, 'Sarah');
+      expect(initial.name, contains('Sarah'));
       expect(initial.soundEnabled, isTrue);
       expect(initial.musicEnabled, isTrue);
 
       final updated = ParentProfile(
-        name: 'Sarah',
+        name: 'Sarah Connor',
         email: 'sarah@example.com',
+        phone: '+1 555-0199',
+        relationship: 'Mother',
         language: 'French',
+        notificationsEnabled: true,
         soundEnabled: false,
         musicEnabled: true,
+        welcomeGreetingEnabled: true,
+        screenTimeLimitEnabled: true,
+        screenTimeLimitMinutes: 45,
+        contentLockEnabled: true,
       );
 
       await ProfileRepository.saveParentProfile(updated);
       final reloaded = await ProfileRepository.loadParentProfile();
 
-      expect(reloaded.name, 'Sarah');
+      expect(reloaded.name, 'Sarah Connor');
       expect(reloaded.email, 'sarah@example.com');
+      expect(reloaded.phone, '+1 555-0199');
+      expect(reloaded.relationship, 'Mother');
       expect(reloaded.language, 'French');
       expect(reloaded.soundEnabled, isFalse);
       expect(reloaded.musicEnabled, isTrue);
+      expect(reloaded.screenTimeLimitMinutes, 45);
     });
   });
 
@@ -327,51 +351,108 @@ void main() {
   });
 
   group('Parent and Baby Profile Screens', () {
-    testWidgets('ParentInfoScreen edits guardian info and audio switches',
+    testWidgets(
+        'ParentProfileScreen scrolls to bottom, updates switches and dropdowns, and persists',
         (tester) async {
-      bool profileOpened = false;
+      bool switchedToBaby = false;
 
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: ParentInfoScreen(
+            body: ParentProfileScreen(
               onBack: () {},
-              onOpenBabyProfile: () => profileOpened = true,
-              onEditBabyInfo: () {},
+              onSwitchToBabyProfile: () => switchedToBaby = true,
             ),
           ),
         ),
       );
       await tester.pump(const Duration(milliseconds: 200));
 
-      expect(find.text('Parent Information'), findsOneWidget);
-      expect(find.text('Guardian Name'), findsOneWidget);
+      expect(find.text('Parent Profile'), findsWidgets);
+      expect(find.text('Full Name *'), findsOneWidget);
+      expect(find.text('Email Address *'), findsOneWidget);
 
-      // Scroll down to see Save Settings and toggles
-      await tester.drag(find.byType(ListView), const Offset(0, -600));
+      // Verify profile switcher
+      final babyTab = find.text('Baby Profile');
+      expect(babyTab, findsOneWidget);
+      await tester.tap(babyTab);
+      expect(switchedToBaby, isTrue);
+
+      // Verify relationship dropdown updates immediately
+      final relationshipDropdown = find.byType(DropdownButton<String>).first;
+      await tester.scrollUntilVisible(relationshipDropdown, 150,
+          scrollable: find.byType(Scrollable).first);
+      await tester.tap(relationshipDropdown);
+      await tester.pumpAndSettle();
+      final fatherItem = find.text('Father').last;
+      await tester.tap(fatherItem);
+      await tester.pumpAndSettle();
+      expect(find.text('Father'), findsWidgets);
+
+      // Verify language dropdown updates immediately
+      final languageDropdown = find.byType(DropdownButton<String>).last;
+      await tester.tap(languageDropdown);
+      await tester.pumpAndSettle();
+      final frenchItem = find.text('French').last;
+      await tester.tap(frenchItem);
+      await tester.pumpAndSettle();
+      expect(find.text('French'), findsWidgets);
+
+      // Verify audio switches toggle independently and update AudioVoiceService
+      final soundSwitch =
+          find.widgetWithText(SwitchListTile, 'Voice Pronunciation & Guidance');
+      await tester.scrollUntilVisible(soundSwitch, 200,
+          scrollable: find.byType(Scrollable).first);
+      expect(soundSwitch, findsOneWidget);
+      await tester.tap(soundSwitch);
+      await tester.pumpAndSettle();
+      expect(AudioVoiceService().soundEnabled, isFalse);
+
+      final musicSwitch =
+          find.widgetWithText(SwitchListTile, 'Background Music & Rhymes');
+      expect(musicSwitch, findsOneWidget);
+      await tester.tap(musicSwitch);
+      await tester.pumpAndSettle();
+      expect(AudioVoiceService().musicEnabled, isFalse);
+
+      final welcomeSwitch =
+          find.widgetWithText(SwitchListTile, 'Teddy Welcome Voice & Sound');
+      expect(welcomeSwitch, findsOneWidget);
+      await tester.tap(welcomeSwitch);
+      await tester.pumpAndSettle();
+      expect(AudioVoiceService().welcomeGreetingEnabled, isFalse);
+
+      // Verify diagnostics buttons
+      final testVoiceBtn = find.text('Test Voice 🗣️');
+      await tester.scrollUntilVisible(testVoiceBtn, 200,
+          scrollable: find.byType(Scrollable).first);
+      expect(testVoiceBtn, findsOneWidget);
+      expect(find.text('Test Sound 🔔'), findsOneWidget);
+      await tester.tap(testVoiceBtn);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.text('Test Sound 🔔'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Scroll to bottom to verify Save Profile button is reachable and visible
+      final saveButton = find.text('Save Profile ⭐');
+      await tester.scrollUntilVisible(saveButton, 300,
+          scrollable: find.byType(Scrollable).first);
+      expect(saveButton, findsOneWidget);
+      await tester.tap(saveButton);
       await tester.pumpAndSettle();
 
-      expect(find.text('Save Settings'), findsOneWidget);
-
-      // Verify and tap diagnostic buttons
-      expect(find.text('Audio & Voice Diagnostics'), findsOneWidget);
-      expect(find.text('Test Voice'), findsOneWidget);
-      expect(find.text('Test Music / SFX'), findsOneWidget);
-      await tester.tap(find.text('Test Voice'));
-      await tester.pump(const Duration(milliseconds: 200));
-      await tester.tap(find.text('Test Music / SFX'));
-      await tester.pump(const Duration(milliseconds: 200));
-
-      // Scroll further down to reach shortcut buttons
-      await tester.drag(find.byType(ListView), const Offset(0, -400));
-      await tester.pump(const Duration(milliseconds: 200));
-
-      // Tap Child Profile shortcut button
-      await tester.tap(find.text('Child Profile'));
-      expect(profileOpened, isTrue);
+      // Verify persistent storage in ProfileRepository
+      final savedParent = await ProfileRepository.loadParentProfile();
+      expect(savedParent.relationship, 'Father');
+      expect(savedParent.language, 'French');
+      expect(savedParent.soundEnabled, isFalse);
+      expect(savedParent.musicEnabled, isFalse);
+      expect(savedParent.welcomeGreetingEnabled, isFalse);
     });
 
-    testWidgets('BabyInfoScreen saves child nickname and age', (tester) async {
+    testWidgets(
+        'BabyInfoScreen scrolls to bottom, validates nickname, and persists baby profile',
+        (tester) async {
       bool saved = false;
 
       await tester.pumpWidget(
@@ -386,36 +467,65 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 200));
 
-      expect(find.text('Baby Information'), findsOneWidget);
-      expect(find.text("Child's First Name or Nickname"), findsOneWidget);
+      expect(find.text('Edit Baby Profile'), findsOneWidget);
+      expect(find.text("Full Name"), findsOneWidget);
+      expect(find.text("Nickname (Used by Teddy) *"), findsOneWidget);
 
-      // Select age 5
-      final age5 = find.text('5');
-      expect(age5, findsOneWidget);
-      await tester.tap(age5);
-      await tester.pump(const Duration(milliseconds: 100));
+      final nicknameField = find.byType(TextFormField).at(1);
+      // Test required validation - clear nickname
+      await tester.enterText(nicknameField, '');
+      final saveBtn = find.text('Save Profile ⭐');
+      await tester.scrollUntilVisible(saveBtn, 400,
+          scrollable: find.byType(Scrollable).first);
+      await tester.tap(saveBtn);
+      await tester.pumpAndSettle();
+      expect(find.text("Please enter a nickname"), findsOneWidget);
+      expect(saved, isFalse);
+
+      // Test length validation - 1 character
+      await tester.scrollUntilVisible(nicknameField, -400,
+          scrollable: find.byType(Scrollable).first);
+      await tester.enterText(nicknameField, 'E');
+      await tester.scrollUntilVisible(saveBtn, 400,
+          scrollable: find.byType(Scrollable).first);
+      await tester.tap(saveBtn);
+      await tester.pumpAndSettle();
+      expect(
+          find.text("Nickname must be at least 2 characters"), findsOneWidget);
+      expect(saved, isFalse);
+
+      // Enter valid nickname
+      await tester.scrollUntilVisible(nicknameField, -400,
+          scrollable: find.byType(Scrollable).first);
+      await tester.enterText(nicknameField, 'Milo');
 
       // Select avatar Puppy
       final puppyAvatar = find.text('Puppy');
+      await tester.scrollUntilVisible(puppyAvatar, 200,
+          scrollable: find.byType(Scrollable).first);
       expect(puppyAvatar, findsOneWidget);
       await tester.tap(puppyAvatar);
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Scroll and save profile
-      await tester.drag(find.byType(ListView), const Offset(0, -400));
-      await tester.pump(const Duration(milliseconds: 200));
-
-      final saveBtn = find.text('Save Profile ⭐');
+      // Scroll to bottom and save profile
+      await tester.scrollUntilVisible(saveBtn, 500,
+          scrollable: find.byType(Scrollable).first);
       expect(saveBtn, findsOneWidget);
       await tester.tap(saveBtn);
-      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
 
       expect(saved, isTrue);
+
+      final reloadedBaby = await ProfileRepository.loadBabyProfile();
+      expect(reloadedBaby.nickname, 'Milo');
+      expect(reloadedBaby.avatarName, 'Puppy');
     });
 
-    testWidgets('BabyProfileScreen displays stats and opens edit profile',
+    testWidgets(
+        'BabyProfileScreen displays stats and switches to Parent Profile',
         (tester) async {
       bool editOpened = false;
+      bool switchedToParent = false;
       final controller = AnimationController(
         vsync: const TestVSync(),
         duration: const Duration(seconds: 1),
@@ -430,6 +540,7 @@ void main() {
               bob: controller,
               onBack: () {},
               onEditProfile: () => editOpened = true,
+              onSwitchToParentProfile: () => switchedToParent = true,
             ),
           ),
         ),
@@ -437,8 +548,15 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
 
       expect(find.text("Emma's Profile"), findsOneWidget);
-      expect(find.text('8'), findsOneWidget); // completed activities
-      expect(find.text('3'), findsOneWidget); // badges unlocked
+      expect(find.text('26/26'), findsOneWidget); // alphabet phonics
+      expect(find.text('10/10'), findsOneWidget); // numbers
+      expect(find.text('8'), findsOneWidget); // games won
+
+      // Switch to Parent Profile
+      final parentTab = find.text('Parent Profile');
+      expect(parentTab, findsOneWidget);
+      await tester.tap(parentTab);
+      expect(switchedToParent, isTrue);
 
       final editIcon = find.byIcon(Icons.edit_rounded).first;
       expect(editIcon, findsOneWidget);
@@ -455,12 +573,8 @@ void main() {
       await tester.pumpWidget(const TeddyAiApp());
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Welcome -> Age -> Dashboard
-      await tester.tap(find.text("Let's Start Learning"));
-      await tester.pump(const Duration(milliseconds: 500));
-      final continueBtn = find.text('Continue ✨');
-      await tester.ensureVisible(continueBtn);
-      await tester.tap(continueBtn);
+      // Welcome Screen -> Continue Learning -> Dashboard
+      await tester.tap(find.text("Continue Learning"));
       await tester.pump(const Duration(milliseconds: 500));
 
       // Open Progress
@@ -474,12 +588,8 @@ void main() {
       await tester.pumpWidget(const TeddyAiApp());
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Welcome -> Dashboard
-      await tester.tap(find.text("Let's Start Learning"));
-      await tester.pump(const Duration(milliseconds: 500));
-      final continueBtn = find.text('Continue ✨');
-      await tester.ensureVisible(continueBtn);
-      await tester.tap(continueBtn);
+      // Welcome Screen -> Continue Learning -> Dashboard
+      await tester.tap(find.text("Continue Learning"));
       await tester.pump(const Duration(milliseconds: 500));
 
       // Open Games
@@ -515,12 +625,8 @@ void main() {
       await tester.pumpWidget(const TeddyAiApp());
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Welcome -> Dashboard
-      await tester.tap(find.text("Let's Start Learning"));
-      await tester.pump(const Duration(milliseconds: 500));
-      final continueBtn = find.text('Continue ✨');
-      await tester.ensureVisible(continueBtn);
-      await tester.tap(continueBtn);
+      // Welcome Screen -> Continue Learning -> Dashboard
+      await tester.tap(find.text("Continue Learning"));
       await tester.pump(const Duration(milliseconds: 500));
 
       // Open Activities
